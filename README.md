@@ -1,7 +1,7 @@
 # 渔港与渔船档案地图（sologsb-1128 / gbfishport）
 
 面向渔港管理站、渔业合作社与船东的**纯前端单页应用**：把渔港泊位条件、渔船技术档案与进出港动态集中到一张图上核对。
-支持登记泊位与补给能力、建立含主机功率与吨位的渔船档案、记录进出港与泊位占用。
+支持登记泊位与补给能力、建立含主机功率与吨位的渔船档案、记录进出港与泊位占用；台风压境时为证书过期船只提供**限时紧急回港**通道。
 
 ## 一键启动（Docker Compose）
 
@@ -42,12 +42,12 @@ sologsb-1128/
 │   ├── nginx.conf              # try_files $uri $uri/ /index.html + gzip
 │   ├── public/favicon.svg
 │   └── src/
-│       ├── types/              # port.ts / vessel.ts / call.ts / berth.ts（4 个数据模型）
-│       ├── stores/             # portStore.ts / vesselStore.ts / uiStore.ts
-│       ├── db/                 # index.ts（Dexie v1→v3 迁移）/ berth.ts / seed.ts
+│       ├── types/              # port.ts / vessel.ts / call.ts / berth.ts / emergency.ts（5 个数据模型）
+│       ├── stores/             # portStore.ts / vesselStore.ts / uiStore.ts / emergencyStore.ts
+│       ├── db/                 # index.ts（Dexie v1→v4 迁移）/ berth.ts / seed.ts
 │       ├── components/common/  # PortCard / BerthGrid / VesselSpecTable / MapPanel / EmptyState
-│       ├── hooks/              # useAmapLoader / useBerthStatus / useLocalDraft
-│       ├── pages/              # PortList / PortDetail / VesselList / VesselDetail / CallBoard / MapView
+│       ├── hooks/              # useAmapLoader / useBerthStatus / useLocalDraft / useEmergencyWatchdog
+│       ├── pages/              # PortList / PortDetail / VesselList / VesselDetail / CallBoard / EmergencyBoard / MapView
 │       ├── router/index.ts
 │       └── utils/              # tonnage.ts / geo.ts / format.ts
 └── README.md
@@ -61,7 +61,8 @@ sologsb-1128/
 | `/ports/:id` | 渔港详情：基本信息与补给能力、SVG 泊位网格（点击查看占用船舶）、在港船舶与近日流水 | 四个模型 |
 | `/vessels` | 渔船检索：按作业类型、主机功率区间、总吨位与船籍港组合查询 | FishingVessel |
 | `/vessels/:id` | 渔船档案详情：主尺度、主机功率、作业类型、证书有效期与进出港时间线 | FishingVessel、PortCall |
-| `/calls` | 进出港登记：选择渔船与类型，填写泊位号、加冰量、加油量、卸货量并同步泊位状态 | PortCall、Berth、FishingVessel |
+| `/calls` | 进出港登记：选择渔船与类型，填写泊位号、加冰量、加油量、卸货量并同步泊位状态；证书过期船只普通进港被拦截并给出紧急通道入口 | PortCall、Berth、FishingVessel |
+| `/emergency` | 台风紧急回港：值班员选定避风渔港与停留时长，按避风等级、水深与现有占用排位分配限时泊位，必要时挤掉排位最末普通船并发送改派提醒；支持手动释放、倒计时与到期自动释放 | EmergencyStay、ReassignmentNotice、Berth、FishingVessel |
 | `/map` | 渔港与在港渔船分布：高德 JS API 标记，未配置 key 时为 SVG 网格视图，点选弹出泊位占用摘要 | FishingPort、Berth |
 
 ## 数据存储说明
@@ -70,7 +71,15 @@ sologsb-1128/
   - `v1`：建 `ports`、`vessels` 表
   - `v2`：新增 `calls` 表与 `vesselId` 索引
   - `v3`：新增 `berths` 表，并按每个渔港登记的泊位数生成初始泊位记录
-- **表单草稿走 localStorage**（键前缀 `gbfishport:draft:`），例如进出港登记草稿 `gbfishport:draft:call-board`，提交成功后自动清空。
+  - `v4`：新增 `emergencyStays`（台风紧急限时占用，释放后记录保留）与 `reassignNotices`（被挤普通船的改派提醒）表；`berths` 补 `occupyKind / expireAt / emergencyStayId` 字段，并新增 `[portId+vesselId]` 复合索引
+- **台风紧急回港（限时占用）规则**（见 `/emergency`）：
+  - 证书过期船只的**普通进港一律拦截**，提示改走紧急通道；紧急通道豁免证书校验（申报时留痕证书状态）
+  - 值班员选定渔港、台风等级、估算吃水与停留时长（≤72h）；渔港避风等级 < 台风等级时不予接纳，泊位水深 < 吃水不参与排位
+  - 排位优先用空闲泊位（水深最贴近吃水者优先，保留深水泊位）；港内无空闲时挤掉**现有占用排位最末（最晚靠泊）的普通船**，紧急限时占用之间不可互挤
+  - 抢占过程在单个 Dexie 事务内复检，保证：同一泊位同一时段只有一条有效占用；同一艘船重复提交不能多占（无论普通还是紧急）
+  - 被挤走的普通船立刻收到「改派提醒」，在紧急通道、渔船档案与地图摘要中可阅知
+  - 看门狗（1s 倒计时 + 20s 扫描）到期自动释放泊位并将占用记录标记为「超时释放」；值班员也可提前手动释放，记录全程保留
+- **表单草稿走 localStorage**（键前缀 `gbfishport:draft:`），例如进出港登记草稿 `gbfishport:draft:call-board`、紧急回港草稿 `gbfishport:draft:emergency-board`，提交成功后自动清空。
 - 首次打开会自动写入一组演示数据（4 座渔港、6 艘渔船、8 条进出港流水与对应泊位），便于直接查看各页面效果。
 - 容器无状态：不使用数据库服务、不挂载命名卷，清空浏览器站点数据即可重置。
 

@@ -68,7 +68,21 @@ export function isToday(iso: string): boolean {
 /** 两个 ISO 时间是否属于同一天 */
 export function isSameDay(a: string, b: string): boolean {
   const da = new Date(a);
-  const db = new Date(b);
-  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return false;
-  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+  const dbDate = new Date(b);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(dbDate.getTime())) return false;
+  return da.getFullYear() === dbDate.getFullYear() && da.getMonth() === dbDate.getMonth() && da.getDate() === dbDate.getDate();
+}
+
+/** 剩余毫秒 → 「12 时 05 分」/「03 分 20 秒」/「已超时 02 分」 */
+export function formatCountdown(ms: number): string {
+  const overdue = ms < 0;
+  const totalMin = Math.floor(Math.abs(ms) / 60000);
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  const seconds = Math.floor((Math.abs(ms) % 60000) / 1000);
+  let text: string;
+  if (hours > 0) text = `${hours} 时 ${pad(minutes)} 分`;
+  else if (totalMin > 0) text = `${totalMin} 分 ${pad(seconds)} 秒`;
+  else text = `${seconds} 秒`;
+  return overdue ? `已超时 ${text}` : `剩余 ${text}`;
 }

@@ -3,17 +3,21 @@ import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
 import type { Berth } from '../types/berth';
+import type { EmergencyStay, ReassignmentNotice } from '../types/emergency';
 import { buildBerthRecords } from './berth';
 
 /**
  * gbfishport-db：库名固定为 gbfishport-db
- * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录。
+ * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录；
+ * v4 新增 emergencyStays（紧急限时占用）与 reassignNotices（改派提醒）表，berths 补占用性质与到期时间字段。
  */
 export class FishPortDatabase extends Dexie {
   ports!: Table<FishingPort, string>;
   vessels!: Table<FishingVessel, string>;
   calls!: Table<PortCall, string>;
   berths!: Table<Berth, string>;
+  emergencyStays!: Table<EmergencyStay, string>;
+  reassignNotices!: Table<ReassignmentNotice, string>;
 
   constructor() {
     super('gbfishport-db');
@@ -52,6 +56,25 @@ export class FishPortDatabase extends Dexie {
             await berthTable.bulkPut(buildBerthRecords(port));
           }
         }
+      });
+
+    this.version(4)
+      .stores({
+        // 新增两张表；berths 增加 vesselId+portId 复合索引用于「同船是否已在港」校验
+        berths: 'id, portId, berthNo, status, vesselId, [portId+vesselId], emergencyStayId',
+        emergencyStays: 'id, vesselId, portId, berthId, status, expireAt, displacedVesselId',
+        reassignNotices: 'id, stayId, vesselId, portId, read',
+      })
+      .upgrade(async (tx) => {
+        // v4 迁移：既有占用一律视为普通进港占用，补齐占用性质字段
+        await tx
+          .table<Berth, string>('berths')
+          .toCollection()
+          .modify((berth) => {
+            if (!berth.occupyKind) berth.occupyKind = berth.status === '占用' ? '普通' : '普通';
+            if (berth.expireAt === undefined) berth.expireAt = null;
+            if (berth.emergencyStayId === undefined) berth.emergencyStayId = null;
+          });
       });
   }
 }

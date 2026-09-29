@@ -5,6 +5,8 @@ import { toPlain, uid } from '../utils/format';
 import { emptyPortFilter, type FishingPort, type PortFilter, type SupplyCapability } from '../types/port';
 import type { Berth, BerthStatus } from '../types/berth';
 import type { CallDraft, PortCall } from '../types/call';
+import { useVesselStore } from './vesselStore';
+import { isCertificateExpired } from '../utils/emergency';
 import { buildBerthRecords } from '../db/berth';
 
 export interface PortInput {
@@ -128,6 +130,9 @@ export const usePortStore = defineStore('port', () => {
       vesselName: status === '占用' ? hit.vesselName : null,
       berthAt: status === '占用' ? hit.berthAt ?? new Date().toISOString() : hit.berthAt,
       leaveAt: status === '空闲' ? new Date().toISOString() : null,
+      occupyKind: status === '占用' ? hit.occupyKind ?? '普通' : '普通',
+      expireAt: status === '空闲' ? null : hit.expireAt ?? null,
+      emergencyStayId: status === '空闲' ? null : hit.emergencyStayId ?? null,
     };
     await db.berths.put(toPlain(next));
     berths.value = berths.value.map((b) => (b.id === berthId ? next : b));
@@ -141,10 +146,56 @@ export const usePortStore = defineStore('port', () => {
     ports.value = ports.value.map((p) => (p.id === portId ? next : p));
   }
 
+  /** 直接落库一条泊位状态（紧急回港事务提交后复用，保证 berths 与 store 一致） */
+  async function syncBerthFromDb(berthId: string): Promise<void> {
+    const fresh = await db.berths.get(berthId);
+    if (!fresh) return;
+    const exists = berths.value.some((b) => b.id === fresh.id);
+    berths.value = exists
+      ? berths.value.map((b) => (b.id === fresh.id ? fresh : b))
+      : [...berths.value, fresh];
+  }
+
   /**
    * 登记一条进出港记录，并同步泊位占用状态（进港 → 占用，出港 → 释放）。
+   * 普通进港拦截规则：证书过期船只不得普通进港（紧急回港请走台风避险通道）；
+   * 同一泊位同一时段只能有一条有效占用；同一艘船已有在港占用时不得重复进港。
    */
   async function registerCall(draft: CallDraft, vesselName: string, portId: string): Promise<PortCall> {
+    const vesselStore = useVesselStore();
+    const vessel = vesselStore.vesselById(draft.vesselId);
+
+    if (draft.type === '进港') {
+      if (vessel && isCertificateExpired(vessel)) {
+        throw new Error(`该船证书已于 ${vessel.certificateExpiry} 过期，普通进港不予签证，请改走台风紧急回港`);
+      }
+      // 同一泊位同一时段只留一条有效占用
+      const berth = berths.value.find((b) => b.portId === portId && b.berthNo === draft.berthNo);
+      if (berth && berth.status === '占用') {
+        throw new Error(
+          `${berth.berthNo} 已被${berth.occupyKind === '紧急' ? '紧急回港船 ' : ''}${berth.vesselName ?? '其他船舶'}占用，同一泊位同一时段只留一条有效占用`,
+        );
+      }
+      // 同一艘船重复提交不能多占（任意渔港已有有效占用即拦截）
+      const occupied = await db.berths.where('vesselId').equals(draft.vesselId).filter((b) => b.status === '占用').first();
+      if (occupied) {
+        const otherPort = portById(occupied.portId)?.name ?? occupied.portId;
+        throw new Error(`${vesselName} 已在 ${otherPort} ${occupied.berthNo} 泊位占用中，同一艘船不能重复进港多占`);
+      }
+    } else {
+      // 出港必须是本船当前占用的泊位；紧急限时占用请到台风避险通道办理释放
+      const berth = berths.value.find((b) => b.portId === portId && b.berthNo === draft.berthNo);
+      if (!berth || berth.status !== '占用') {
+        throw new Error(`${draft.berthNo} 当前并非占用状态，无法办理出港`);
+      }
+      if (berth.vesselId !== draft.vesselId) {
+        throw new Error(`${draft.berthNo} 当前由 ${berth.vesselName ?? '其他船舶'} 占用，不能替别的船办理出港`);
+      }
+      if (berth.occupyKind === '紧急') {
+        throw new Error('紧急限时占用不能直接普通出港，请到台风避险通道办理释放');
+      }
+    }
+
     const call: PortCall = {
       id: uid('c'),
       vesselId: draft.vesselId,
@@ -172,6 +223,9 @@ export const usePortStore = defineStore('port', () => {
               vesselName,
               berthAt: call.time,
               leaveAt: null,
+              occupyKind: '普通',
+              expireAt: null,
+              emergencyStayId: null,
             }
           : {
               ...berth,
@@ -180,6 +234,9 @@ export const usePortStore = defineStore('port', () => {
               vesselName: null,
               berthAt: null,
               leaveAt: call.time,
+              occupyKind: '普通',
+              expireAt: null,
+              emergencyStayId: null,
             };
       await db.berths.put(toPlain(next));
       berths.value = berths.value.map((b) => (b.id === berth.id ? next : b));
@@ -203,6 +260,7 @@ export const usePortStore = defineStore('port', () => {
     createPort,
     addBerth,
     setBerthStatus,
+    syncBerthFromDb,
     updatePort,
     registerCall,
   };

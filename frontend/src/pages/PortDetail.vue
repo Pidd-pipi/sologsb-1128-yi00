@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { usePortStore } from '../stores/portStore';
 import { useVesselStore } from '../stores/vesselStore';
+import { useEmergencyStore } from '../stores/emergencyStore';
 import { useBerthStatus } from '../hooks/useBerthStatus';
+import { formatCountdown } from '../utils/format';
 import PortCard from '../components/common/PortCard.vue';
 import BerthGrid from '../components/common/BerthGrid.vue';
 import MapPanel from '../components/common/MapPanel.vue';
@@ -17,12 +19,23 @@ const route = useRoute();
 const router = useRouter();
 const portStore = usePortStore();
 const vesselStore = useVesselStore();
+const emergencyStore = useEmergencyStore();
 
 const portId = computed(() => String(route.params.id ?? ''));
 const port = computed(() => portStore.portById(portId.value));
 const berthsRef = computed(() => portStore.berths);
 const { summary, summaryOf, inPortVessels } = useBerthStatus(berthsRef, portId);
 const portBerths = computed(() => portStore.berthsOf(portId.value));
+
+/** 该渔港生效中的紧急限时占用 */
+const portEmergencyStays = computed(() =>
+  emergencyStore.activeStays.filter((s) => s.portId === portId.value),
+);
+
+function remainOf(berth: Berth): string {
+  if (!berth.expireAt) return '';
+  return formatCountdown(new Date(berth.expireAt).getTime() - emergencyStore.nowTick);
+}
 
 const activeBerthId = ref('');
 const berthDialogVisible = ref(false);
@@ -37,8 +50,11 @@ const addBerthVisible = ref(false);
 const addBerthForm = reactive({ berthNo: '', designDepth: 4.5 });
 
 const recentCalls = computed(() => {
-  const numbers = new Set(portBerths.value.map((b) => b.berthNo));
-  return portStore.callsSorted.filter((c) => numbers.has(c.berthNo)).slice(0, 8);
+  // 同一泊位号在不同渔港会重复（各港均有 B01），按「该港在港 / 历史占用过的船」反查避免串港
+  const vesselIds = new Set(portBerths.value.filter((b) => b.vesselId).map((b) => b.vesselId));
+  return portStore.callsSorted
+    .filter((c) => new Set(portBerths.value.map((b) => b.berthNo)).has(c.berthNo) && vesselIds.has(c.vesselId))
+    .slice(0, 8);
 });
 
 const supply = computed(() => (port.value ? supplyText(port.value.supply) : '—'));
@@ -48,6 +64,7 @@ const loaded = ref(false);
 async function bootstrap(): Promise<void> {
   if (!portStore.ports.length) await portStore.loadAll();
   if (!vesselStore.vessels.length) await vesselStore.loadAll();
+  if (!emergencyStore.stays.length) await emergencyStore.loadAll();
   loaded.value = true;
 }
 
@@ -71,6 +88,23 @@ async function releaseBerth(): Promise<void> {
   if (!berth) return;
   await portStore.setBerthStatus(berth.id, '空闲');
   ElMessage.success(`${berth.berthNo} 已释放为空闲`);
+}
+
+async function releaseEmergency(stayId: string): Promise<void> {
+  const stay = emergencyStore.stayById(stayId);
+  if (!stay) return;
+  try {
+    await ElMessageBox.confirm(`确认 ${stay.vesselName} 提前结束紧急避险并释放 ${stay.berthNo}？`, '释放紧急占用', {
+      type: 'warning',
+      confirmButtonText: '释放',
+      cancelButtonText: '取消',
+    });
+  } catch {
+    return;
+  }
+  await emergencyStore.releaseStay(stayId, '手动释放');
+  berthDialogVisible.value = false;
+  ElMessage.success(`${stay.vesselName} 已驶离，${stay.berthNo} 已释放`);
 }
 
 async function submitBerth(): Promise<void> {
@@ -117,6 +151,7 @@ function onMapSelect(selectedPortId: string): void {
         </div>
         <div class="page__head-actions">
           <el-button data-testid="open-berth-dialog" @click="addBerthVisible = true">新增泊位</el-button>
+          <el-button type="danger" plain @click="router.push('/emergency')">台风紧急回港</el-button>
           <el-button type="primary" @click="router.push('/calls')">登记进出港</el-button>
         </div>
       </header>
@@ -138,6 +173,7 @@ function onMapSelect(selectedPortId: string): void {
             </el-descriptions>
             <p class="detail-hint">
               当前占用率 {{ percentText(summary.occupancyRate) }}（占用 {{ summary.occupied }} / 空闲 {{ summary.free }} / 维修 {{ summary.maintenance }}）
+              <el-tag v-if="summary.emergency" size="small" type="danger" effect="plain">紧急限时 {{ summary.emergency }}</el-tag>
             </p>
           </el-card>
         </el-col>
@@ -160,10 +196,44 @@ function onMapSelect(selectedPortId: string): void {
         <template #header>
           <span class="card-title">泊位网格（点击泊位查看占用船舶）</span>
         </template>
-        <BerthGrid v-if="portBerths.length" :berths="portBerths" @select="openBerth" />
+        <BerthGrid
+          v-if="portBerths.length"
+          :berths="portBerths"
+          :now-tick="emergencyStore.nowTick"
+          @select="openBerth"
+        />
         <EmptyState v-else title="该渔港暂无泊位记录" description="点击右上角「新增泊位」为该渔港建立泊位清单。">
           <el-button type="primary" @click="addBerthVisible = true">新增泊位</el-button>
         </EmptyState>
+      </el-card>
+
+      <el-card v-if="portEmergencyStays.length" shadow="never" class="detail-card">
+        <template #header>
+          <span class="card-title">台风紧急限时占用（{{ portEmergencyStays.length }} 条）</span>
+        </template>
+        <el-table :data="portEmergencyStays" size="small" border data-testid="port-emergency-table">
+          <el-table-column prop="vesselName" label="紧急回港船" min-width="120" />
+          <el-table-column prop="berthNo" label="泊位号" width="80" />
+          <el-table-column label="台风等级" width="90">
+            <template #default="scope">{{ scope.row.typhoonLevel }} 级</template>
+          </el-table-column>
+          <el-table-column label="到期时间" min-width="150">
+            <template #default="scope">{{ formatDateTime(scope.row.expireAt) }}</template>
+          </el-table-column>
+          <el-table-column label="倒计时" width="140">
+            <template #default="scope">
+              <el-tag size="small" type="danger">{{ formatCountdown(new Date(scope.row.expireAt).getTime() - emergencyStore.nowTick) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="被挤走普通船" min-width="120">
+            <template #default="scope">{{ scope.row.displacedVesselName ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="90">
+            <template #default="scope">
+              <el-button text type="primary" size="small" @click="releaseEmergency(scope.row.id)">提前释放</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </el-card>
 
       <el-row :gutter="16">
@@ -172,11 +242,24 @@ function onMapSelect(selectedPortId: string): void {
             <template #header><span class="card-title">在港船舶（{{ inPortVessels.length }} 艘）</span></template>
             <el-table :data="inPortVessels" size="small" border empty-text="当前无在港船舶">
               <el-table-column prop="vesselName" label="船名" min-width="120" />
-              <el-table-column prop="berthNo" label="泊位号" width="90" />
-              <el-table-column label="靠泊时间" min-width="150">
-                <template #default="scope">{{ formatDateTime(scope.row.berthAt) }}</template>
+              <el-table-column prop="berthNo" label="泊位号" width="80" />
+              <el-table-column label="性质" width="90">
+                <template #default="scope">
+                  <el-tag size="small" :type="scope.row.occupyKind === '紧急' ? 'danger' : 'warning'">
+                    {{ scope.row.occupyKind === '紧急' ? '紧急限时' : '普通' }}
+                  </el-tag>
+                </template>
               </el-table-column>
-              <el-table-column label="操作" width="100">
+              <el-table-column label="靠泊 / 到期" min-width="200">
+                <template #default="scope">
+                  <div>{{ formatDateTime(scope.row.berthAt) }}</div>
+                  <div v-if="scope.row.occupyKind === '紧急'" class="emergency-expire">
+                    <el-tag size="small" type="danger">{{ remainOf(scope.row) }}</el-tag>
+                    <span class="expire-text">{{ formatDateTime(scope.row.expireAt) }} 自动释放</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="90">
                 <template #default="scope">
                   <el-button
                     text
@@ -225,8 +308,19 @@ function onMapSelect(selectedPortId: string): void {
         <el-descriptions :column="1" size="small" border>
           <el-descriptions-item label="泊位号">{{ activeBerth.berthNo }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag size="small" :type="activeBerth.status === '占用' ? 'warning' : activeBerth.status === '维修' ? 'info' : 'success'">
-              {{ activeBerth.status }}
+            <el-tag
+              size="small"
+              :type="
+                activeBerth.occupyKind === '紧急'
+                  ? 'danger'
+                  : activeBerth.status === '占用'
+                    ? 'warning'
+                    : activeBerth.status === '维修'
+                      ? 'info'
+                      : 'success'
+              "
+            >
+              {{ activeBerth.occupyKind === '紧急' ? '紧急限时占用' : activeBerth.status }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="设计水深">{{ formatNumber(activeBerth.designDepth) }} m</el-descriptions-item>
@@ -239,7 +333,11 @@ function onMapSelect(selectedPortId: string): void {
             <template v-else>—</template>
           </el-descriptions-item>
           <el-descriptions-item label="靠泊时间">{{ formatDateTime(activeBerth.berthAt) }}</el-descriptions-item>
-          <el-descriptions-item label="离泊时间">{{ formatDateTime(activeBerth.leaveAt) }}</el-descriptions-item>
+          <el-descriptions-item v-if="activeBerth.occupyKind === '紧急'" label="到期时间">
+            <el-tag size="small" type="danger">{{ remainOf(activeBerth) }}</el-tag>
+            <span style="margin-left: 8px">{{ formatDateTime(activeBerth.expireAt) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-else label="离泊时间">{{ formatDateTime(activeBerth.leaveAt) }}</el-descriptions-item>
           <el-descriptions-item label="主机功率">
             {{ activeVessel ? `${formatNumber(activeVessel.enginePower, 0)} kW` : '—' }}
           </el-descriptions-item>
@@ -250,8 +348,32 @@ function onMapSelect(selectedPortId: string): void {
       </template>
       <template #footer>
         <el-button @click="berthDialogVisible = false">关闭</el-button>
-        <el-button type="warning" data-testid="berth-maintenance" @click="markMaintenance">置为维修</el-button>
-        <el-button type="success" data-testid="berth-release" @click="releaseBerth">释放为空闲</el-button>
+        <el-button
+          v-if="activeBerth?.occupyKind === '紧急' && activeBerth.status === '占用'"
+          type="danger"
+          data-testid="berth-release-emergency"
+          @click="activeBerth.emergencyStayId && releaseEmergency(activeBerth.emergencyStayId)"
+        >
+          紧急占用提前释放
+        </el-button>
+        <el-button
+          v-else
+          type="warning"
+          data-testid="berth-maintenance"
+          :disabled="!activeBerth || (activeBerth.status !== '空闲' && activeBerth.status !== '占用')"
+          @click="markMaintenance"
+        >
+          置为维修
+        </el-button>
+        <el-button
+          v-if="activeBerth && activeBerth.occupyKind !== '紧急'"
+          type="success"
+          data-testid="berth-release"
+          :disabled="activeBerth.status !== '占用'"
+          @click="releaseBerth"
+        >
+          释放为空闲
+        </el-button>
       </template>
     </el-dialog>
 
@@ -311,5 +433,15 @@ function onMapSelect(selectedPortId: string): void {
   margin: 10px 0 0;
   font-size: 12px;
   color: #6b7c8c;
+}
+.emergency-expire {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.expire-text {
+  font-size: 12px;
+  color: #c45656;
 }
 </style>

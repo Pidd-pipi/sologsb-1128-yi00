@@ -2,16 +2,22 @@
 import { computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Location, MapLocation, Tickets, Van } from '@element-plus/icons-vue';
+import { Location, MapLocation, Tickets, Van, WarnTriangleFilled } from '@element-plus/icons-vue';
 import { useUiStore } from './stores/uiStore';
+import { useEmergencyStore } from './stores/emergencyStore';
+import { useEmergencyWatchdog } from './hooks/useEmergencyWatchdog';
 
 const route = useRoute();
 const uiStore = useUiStore();
+const emergencyStore = useEmergencyStore();
+// 台风紧急占用看门狗：倒计时刷新 + 到期自动释放（全局单例）
+useEmergencyWatchdog();
 
 const activePath = computed(() => {
   const path = route.path;
   if (path === '/' || path.startsWith('/ports')) return '/';
   if (path.startsWith('/vessels')) return '/vessels';
+  if (path.startsWith('/emergency')) return '/emergency';
   if (path.startsWith('/calls')) return '/calls';
   if (path.startsWith('/map')) return '/map';
   return path;
@@ -49,6 +55,16 @@ watch(
         <el-menu-item index="/calls">
           <el-icon><Tickets /></el-icon>
           进出港登记
+        </el-menu-item>
+        <el-menu-item index="/emergency">
+          <el-icon><WarnTriangleFilled /></el-icon>
+          <span>台风紧急回港</span>
+          <el-badge
+            v-if="emergencyStore.activeStays.length"
+            :value="emergencyStore.activeStays.length"
+            type="danger"
+            class="app__menu-badge"
+          />
         </el-menu-item>
         <el-menu-item index="/map">
           <el-icon><MapLocation /></el-icon>
@@ -106,6 +122,9 @@ watch(
 }
 .app__menu {
   border-bottom: none;
+}
+.app__menu-badge {
+  margin-left: 8px;
 }
 .app__main {
   padding: 20px 24px 8px;

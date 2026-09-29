@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Berth, BerthStatus } from '../../types/berth';
-import { formatNumber } from '../../utils/format';
+import { formatCountdown, formatNumber } from '../../utils/format';
 
 const props = withDefaults(
   defineProps<{
@@ -9,14 +9,16 @@ const props = withDefaults(
     perRow?: number;
     selectable?: boolean;
     highlightBerthNo?: string;
+    /** 倒计时基准时间戳（毫秒），由看门狗驱动 */
+    nowTick?: number;
   }>(),
-  { perRow: 4, selectable: true, highlightBerthNo: '' },
+  { perRow: 4, selectable: true, highlightBerthNo: '', nowTick: Date.now() },
 );
 
 const emit = defineEmits<{ (e: 'select', berth: Berth): void }>();
 
-const CELL_W = 120;
-const CELL_H = 78;
+const CELL_W = 132;
+const CELL_H = 96;
 const GAP = 12;
 const PAD = 14;
 
@@ -36,13 +38,32 @@ const rows = computed(() => Math.max(1, Math.ceil(props.berths.length / props.pe
 const width = computed(() => PAD * 2 + props.perRow * CELL_W + (props.perRow - 1) * GAP);
 const height = computed(() => PAD * 2 + rows.value * CELL_H + (rows.value - 1) * GAP);
 
-const legend = computed(() =>
-  (['空闲', '占用', '维修'] as BerthStatus[]).map((status) => ({
-    status,
+function isEmergency(berth: Berth): boolean {
+  return berth.status === '占用' && berth.occupyKind === '紧急';
+}
+
+function strokeOf(berth: Berth): string {
+  if (isEmergency(berth)) return '#f56c6c';
+  return COLORS[berth.status];
+}
+
+const legend = computed(() => {
+  const items: { key: string; label: string; color: string; count: number }[] = (
+    ['空闲', '占用', '维修'] as BerthStatus[]
+  ).map((status) => ({
+    key: status,
+    label: status,
     color: COLORS[status],
-    count: props.berths.filter((b) => b.status === status).length,
-  })),
-);
+    count: props.berths.filter((b) => b.status === status && !isEmergency(b)).length,
+  }));
+  items.push({
+    key: '紧急',
+    label: '紧急限时',
+    color: '#f56c6c',
+    count: props.berths.filter((b) => isEmergency(b)).length,
+  });
+  return items;
+});
 
 function cellAt(index: number): { x: number; y: number } {
   const row = Math.floor(index / props.perRow);
@@ -70,38 +91,46 @@ function onSelect(berth: Berth): void {
           :width="CELL_W"
           :height="CELL_H"
           rx="10"
-          :fill="FILLS[berth.status]"
-          :stroke="highlightBerthNo === berth.berthNo ? '#409eff' : COLORS[berth.status]"
-          :stroke-width="highlightBerthNo === berth.berthNo ? 3 : 1.5"
+          :fill="isEmergency(berth) ? '#fef0f0' : FILLS[berth.status]"
+          :stroke="highlightBerthNo === berth.berthNo ? '#409eff' : strokeOf(berth)"
+          :stroke-width="highlightBerthNo === berth.berthNo ? 3 : isEmergency(berth) ? 2.5 : 1.5"
           class="berth-grid__cell"
           :class="{ 'berth-grid__cell--selectable': selectable }"
           :data-testid="`berth-cell-${berth.berthNo}`"
           :data-berth-no="berth.berthNo"
           :data-status="berth.status"
+          :data-kind="berth.occupyKind ?? '普通'"
           @click="onSelect(berth)"
         >
-          <title>{{ `${berth.berthNo} · ${berth.status}${berth.vesselName ? ' · ' + berth.vesselName : ''}` }}</title>
+          <title>
+            {{ `${berth.berthNo} · ${isEmergency(berth) ? '紧急限时占用' : berth.status}${berth.vesselName ? ' · ' + berth.vesselName : ''}` }}
+          </title>
         </rect>
         <text
           :x="cellAt(index).x + 12"
-          :y="cellAt(index).y + 26"
+          :y="cellAt(index).y + 24"
           class="berth-grid__no"
+          :class="{ 'berth-grid__no--emergency': isEmergency(berth) }"
           :data-status="berth.status"
         >
           {{ berth.berthNo }}
         </text>
-        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 46" class="berth-grid__meta">
-          {{ berth.status }} · 水深 {{ formatNumber(berth.designDepth) }}m
+        <text :x="cellAt(index).x + 72" :y="cellAt(index).y + 24" class="berth-grid__badge" v-if="isEmergency(berth)">紧急</text>
+        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 44" class="berth-grid__meta">
+          {{ isEmergency(berth) ? '限时避险' : berth.status }} · 水深 {{ formatNumber(berth.designDepth) }}m
         </text>
-        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 64" class="berth-grid__vessel">
+        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 62" class="berth-grid__vessel">
           {{ berth.status === '占用' ? berth.vesselName || '未知船舶' : '—' }}
+        </text>
+        <text v-if="isEmergency(berth) && berth.expireAt" :x="cellAt(index).x + 12" :y="cellAt(index).y + 74" class="berth-grid__countdown">
+          {{ formatCountdown(new Date(berth.expireAt).getTime() - nowTick) }}
         </text>
       </g>
     </svg>
     <div class="berth-grid__legend" data-testid="berth-grid-legend">
-      <span v-for="item in legend" :key="item.status" class="berth-grid__legend-item">
+      <span v-for="item in legend" :key="item.key" class="berth-grid__legend-item">
         <i class="berth-grid__dot" :style="{ background: item.color }"></i>
-        {{ item.status }} {{ item.count }}
+        {{ item.label }} {{ item.count }}
       </span>
     </div>
   </div>
@@ -129,6 +158,14 @@ function onSelect(berth: Berth): void {
   font-weight: 700;
   fill: #17324d;
 }
+.berth-grid__no--emergency {
+  fill: #c45656;
+}
+.berth-grid__badge {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #f56c6c;
+}
 .berth-grid__meta {
   font-size: 11px;
   fill: #6b7c8c;
@@ -136,6 +173,11 @@ function onSelect(berth: Berth): void {
 .berth-grid__vessel {
   font-size: 11px;
   fill: #3d5670;
+}
+.berth-grid__countdown {
+  font-size: 10px;
+  font-weight: 600;
+  fill: #c45656;
 }
 .berth-grid__legend {
   display: flex;

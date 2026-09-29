@@ -22,7 +22,10 @@ export const SEED_OCCUPANCY: Record<string, SeedOccupancy[]> = {
   'p-1001': [
     { berthNo: 'B01', vesselId: 'v-2001', vesselName: '浙象渔05123', status: '占用', berthAt: hoursAgo(5) },
     { berthNo: 'B02', vesselId: 'v-2005', vesselName: '浙象渔05288', status: '占用', berthAt: hoursAgo(3) },
+    { berthNo: 'B03', vesselId: 'v-2004', vesselName: '浙岭渔09342', status: '占用', berthAt: hoursAgo(2) },
     { berthNo: 'B04', vesselId: '', vesselName: '', status: '维修', berthAt: '' },
+    { berthNo: 'B05', vesselId: 'v-2007', vesselName: '浙象渔05999', status: '占用', berthAt: hoursAgo(4) },
+    { berthNo: 'B06', vesselId: 'v-2009', vesselName: '浙奉渔08118', status: '占用', berthAt: hoursAgo(1) },
   ],
   'p-1002': [
     { berthNo: 'B01', vesselId: 'v-2002', vesselName: '浙普渔13208', status: '占用', berthAt: hoursAgo(2) },
@@ -57,6 +60,9 @@ export function buildBerthRecords(
       leaveAt: null,
       status: hit ? hit.status : '空闲',
       designDepth: port.berthDepth,
+      occupyKind: '普通',
+      expireAt: null,
+      emergencyStayId: null,
     });
   }
   return records;

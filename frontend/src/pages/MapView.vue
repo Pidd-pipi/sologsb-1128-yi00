@@ -145,13 +145,23 @@ function openPortDetail(): void {
             {{ activeSummary.occupied }} / {{ activeSummary.free }}
           </el-descriptions-item>
           <el-descriptions-item label="维修泊位">{{ activeSummary.maintenance }}</el-descriptions-item>
+          <el-descriptions-item label="紧急限时占用">
+            <el-tag size="small" type="danger">{{ activeSummary.emergency }} 艘</el-tag>
+          </el-descriptions-item>
         </el-descriptions>
 
         <p class="dialog-sub">在港船舶</p>
         <el-table :data="activeSummary.occupiedBerths" size="small" border empty-text="当前无在港船舶" data-testid="summary-inport-table">
           <el-table-column prop="berthNo" label="泊位号" width="90" />
           <el-table-column prop="vesselName" label="船名" min-width="130" />
-          <el-table-column label="靠泊时间" min-width="160">
+          <el-table-column label="性质" width="90">
+            <template #default="scope">
+              <el-tag size="small" :type="scope.row.occupyKind === '紧急' ? 'danger' : 'warning'">
+                {{ scope.row.occupyKind === '紧急' ? '紧急限时' : '普通' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="靠泊 / 到期" min-width="160">
             <template #default="scope">{{ formatDateTime(scope.row.berthAt) }}</template>
           </el-table-column>
         </el-table>
@@ -167,7 +177,24 @@ function openPortDetail(): void {
         <p class="dialog-sub">全部泊位</p>
         <el-table :data="activeBerths" size="small" border>
           <el-table-column prop="berthNo" label="泊位号" width="90" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="100">
+            <template #default="scope">
+              <el-tag
+                size="small"
+                :type="
+                  scope.row.occupyKind === '紧急'
+                    ? 'danger'
+                    : scope.row.status === '占用'
+                      ? 'warning'
+                      : scope.row.status === '维修'
+                        ? 'info'
+                        : 'success'
+                "
+              >
+                {{ scope.row.occupyKind === '紧急' ? '紧急限时' : scope.row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="vesselName" label="占用船舶" min-width="130" />
         </el-table>
       </template>

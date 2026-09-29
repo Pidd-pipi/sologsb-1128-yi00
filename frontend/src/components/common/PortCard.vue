@@ -78,6 +78,9 @@ function onClick(): void {
       <span>空闲泊位 <b>{{ summary.free }}</b></span>
       <span>维修泊位 <b>{{ summary.maintenance }}</b></span>
     </div>
+    <div v-if="summary.emergency" class="port-card__emergency" data-testid="port-card-emergency">
+      <el-tag size="small" type="danger" effect="dark">台风避险中 · 紧急限时 {{ summary.emergency }} 艘</el-tag>
+    </div>
 
     <div class="port-card__supply">
       <span class="port-card__supply-label">补给能力</span>
@@ -140,6 +143,9 @@ function onClick(): void {
 }
 .port-card__stats b {
   color: #17324d;
+}
+.port-card__emergency {
+  margin-top: 8px;
 }
 .port-card__supply {
   display: flex;

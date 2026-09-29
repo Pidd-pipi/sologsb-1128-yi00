@@ -6,6 +6,8 @@ import { usePortStore } from '../stores/portStore';
 import { useVesselStore } from '../stores/vesselStore';
 import { useLocalDraft } from '../hooks/useLocalDraft';
 import { useBerthStatus } from '../hooks/useBerthStatus';
+import { isCertificateExpired } from '../utils/emergency';
+import { expiryText } from '../utils/tonnage';
 import BerthGrid from '../components/common/BerthGrid.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import type { Berth } from '../types/berth';
@@ -41,11 +43,14 @@ const vesselOptions = computed(() => vesselStore.vessels);
 
 const selectedVessel = computed(() => vesselStore.vesselById(form.value.vesselId));
 
-/** 进港只能选空闲泊位；出港只能选已占用泊位 */
+/** 普通进港证书拦截：证书过期船只的进港提交会被拦截（紧急回港请走台风避险通道） */
+const certExpired = computed(() => (selectedVessel.value ? isCertificateExpired(selectedVessel.value) : false));
+const inboundBlocked = computed(() => form.value.type === '进港' && certExpired.value);
+
+/** 进港只能选空闲泊位；出港只能选普通占用泊位（紧急限时占用请到台风避险通道释放） */
 const berthOptions = computed(() => {
-  const wanted = form.value.type === '进港' ? '空闲' : '占用';
   return portStore.berths
-    .filter((b) => b.status === wanted)
+    .filter((b) => (form.value.type === '进港' ? b.status === '空闲' : b.status === '占用' && b.occupyKind !== '紧急'))
     .map((b) => ({
       value: `${b.portId}|${b.berthNo}`,
       label: `${portStore.portById(b.portId)?.name ?? b.portId} · ${b.berthNo}`,
@@ -136,6 +141,10 @@ async function submit(): Promise<void> {
     ElMessage.warning('请选择有效的渔船');
     return;
   }
+  if (inboundBlocked.value) {
+    ElMessage.error('该船证书已过期，普通进港已拦截；请前往「台风紧急回港」办理限时避险');
+    return;
+  }
   submitting.value = true;
   try {
     const payload: CallDraft = {
@@ -210,6 +219,20 @@ function openVessel(vesselId: string): void {
               </el-select>
             </el-form-item>
 
+            <el-alert
+              v-if="selectedVessel"
+              :type="certExpired ? 'error' : 'success'"
+              show-icon
+              :closable="false"
+              class="cert-alert"
+              data-testid="cert-alert"
+              :title="
+                certExpired
+                  ? `证书已于 ${selectedVessel.certificateExpiry} 过期（${expiryText(selectedVessel.certificateExpiry)}）：普通进港将被拦截，台风紧急回港可限时避险`
+                  : `证书有效（${expiryText(selectedVessel.certificateExpiry)}），可正常办理进出港`
+              "
+            />
+
             <el-form-item label="进出港类型" prop="type">
               <el-radio-group v-model="form.type" data-testid="call-type">
                 <el-radio-button v-for="t in CALL_TYPES" :key="t" :value="t">{{ t }}</el-radio-button>
@@ -264,7 +287,18 @@ function openVessel(vesselId: string): void {
             </el-form-item>
 
             <el-form-item>
-              <el-button type="primary" :loading="submitting" data-testid="submit-call" @click="submit">保存登记</el-button>
+              <el-button
+                type="primary"
+                :loading="submitting"
+                :disabled="inboundBlocked"
+                data-testid="submit-call"
+                @click="submit"
+              >
+                保存登记
+              </el-button>
+              <el-button v-if="inboundBlocked" type="danger" plain @click="router.push('/emergency')">
+                改办台风紧急回港
+              </el-button>
               <el-button data-testid="clear-draft" @click="clearDraft(); ElMessage.success('草稿已清空')">清空草稿</el-button>
               <el-button v-if="selectedVessel" text type="primary" @click="openVessel(selectedVessel.id)">查看渔船档案</el-button>
             </el-form-item>
@@ -353,6 +387,10 @@ function openVessel(vesselId: string): void {
 }
 .draft-alert {
   border-radius: 10px;
+}
+.cert-alert {
+  border-radius: 10px;
+  margin-bottom: 18px;
 }
 .stat-row {
   display: flex;

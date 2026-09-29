@@ -3,6 +3,11 @@ export type BerthStatus = '空闲' | '占用' | '维修';
 
 export const BERTH_STATUSES: BerthStatus[] = ['空闲', '占用', '维修'];
 
+/** 占用性质：普通进港 / 紧急回港限时占用 */
+export type OccupyKind = '普通' | '紧急';
+
+export const OCCUPY_KINDS: OccupyKind[] = ['普通', '紧急'];
+
 /** 泊位占用记录 */
 export interface Berth {
   id: string;
@@ -22,6 +27,12 @@ export interface Berth {
   status: BerthStatus;
   /** 泊位设计水深 m */
   designDepth: number;
+  /** 占用性质：普通进港 / 紧急回港（v4 起） */
+  occupyKind?: OccupyKind;
+  /** 紧急占用到期时间（ISO 字符串），仅 occupyKind=紧急 时有值 */
+  expireAt?: string | null;
+  /** 关联的紧急占用记录 id，仅 occupyKind=紧急 时有值 */
+  emergencyStayId?: string | null;
 }
 
 /** 泊位占用聚合结果（useBerthStatus 输出） */
@@ -31,10 +42,13 @@ export interface BerthSummary {
   occupied: number;
   free: number;
   maintenance: number;
+  /** 紧急限时占用数量 */
+  emergency: number;
   /** 占用率 0-1 */
   occupancyRate: number;
   /** 在港船舶数量 */
   inPortCount: number;
   freeBerths: Berth[];
   occupiedBerths: Berth[];
+  emergencyBerths: Berth[];
 }

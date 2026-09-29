@@ -1,6 +1,7 @@
 import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
+import type { EmergencyStay, ReassignmentNotice } from '../types/emergency';
 import { toPlain } from '../utils/format';
 import { db } from './index';
 import { buildBerthRecords } from './berth';
@@ -165,6 +166,51 @@ export const SEED_VESSELS: FishingVessel[] = [
     certificateExpiry: '2026-08-05',
     createdAt: daysAgo(90),
   },
+  {
+    id: 'v-2007',
+    name: '浙象渔05999',
+    vesselNo: 'ZXY05999',
+    homePort: '石浦',
+    length: 26.8,
+    beam: 5.6,
+    grossTonnage: 105,
+    enginePower: 184,
+    operationType: '刺网',
+    hullMaterial: '钢质',
+    owner: '黄阿康',
+    certificateExpiry: '2026-04-15',
+    createdAt: daysAgo(70),
+  },
+  {
+    id: 'v-2008',
+    name: '浙象渔05777',
+    vesselNo: 'ZXY05777',
+    homePort: '石浦',
+    length: 30.2,
+    beam: 6.1,
+    grossTonnage: 142,
+    enginePower: 226,
+    operationType: '拖网',
+    hullMaterial: '钢质',
+    owner: '吴海涛',
+    certificateExpiry: '2026-05-10',
+    createdAt: daysAgo(60),
+  },
+  {
+    id: 'v-2009',
+    name: '浙奉渔08118',
+    vesselNo: 'ZFY08118',
+    homePort: '石浦',
+    length: 25.4,
+    beam: 5.4,
+    grossTonnage: 96,
+    enginePower: 171,
+    operationType: '钓具',
+    hullMaterial: '钢质',
+    owner: '沈志国',
+    certificateExpiry: '2027-09-01',
+    createdAt: daysAgo(40),
+  },
 ];
 
 /** 初始进出港流水 */
@@ -248,6 +294,19 @@ export const SEED_CALLS: PortCall[] = [
     createdAt: daysAgo(1),
   },
   {
+    id: 'c-3009',
+    vesselId: 'v-2009',
+    vesselName: '浙奉渔08118',
+    type: '进港',
+    time: hoursAgo(1),
+    berthNo: 'B06',
+    iceKg: 200,
+    fuelL: 180,
+    unloadKg: 1500,
+    visaStatus: '待签证',
+    createdAt: hoursAgo(1),
+  },
+  {
     id: 'c-3007',
     vesselId: 'v-2001',
     vesselName: '浙象渔05123',
@@ -275,9 +334,53 @@ export const SEED_CALLS: PortCall[] = [
   },
 ];
 
+/** 预置一条生效中的紧急限时占用：v-2008（证书过期）挤掉排位最末普通船 v-2009，4 小时后到期 */
+const SEED_EMERGENCY_STAYS: EmergencyStay[] = [
+  {
+    id: 'e-seed-4001',
+    vesselId: 'v-2008',
+    vesselName: '浙象渔05777',
+    portId: 'p-1001',
+    portName: '石浦中心渔港',
+    berthId: 'p-1001-B06',
+    berthNo: 'B06',
+    typhoonLevel: 12,
+    vesselDraft: 3.6,
+    durationHours: 6,
+    startAt: hoursAgo(2),
+    expireAt: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+    status: '生效中',
+    releasedAt: null,
+    releaseReason: null,
+    certificateExpired: true,
+    displacedVesselId: 'v-2009',
+    displacedVesselName: '浙奉渔08118',
+    displacedAt: hoursAgo(2),
+    createdAt: hoursAgo(2),
+  },
+];
+
+const SEED_REASSIGN_NOTICES: ReassignmentNotice[] = [
+  {
+    id: 'n-seed-5001',
+    stayId: 'e-seed-4001',
+    vesselId: 'v-2009',
+    vesselName: '浙奉渔08118',
+    portId: 'p-1001',
+    portName: '石浦中心渔港',
+    berthNo: 'B06',
+    displacedAt: hoursAgo(2),
+    suggestion:
+      '浙奉渔08118：原 石浦中心渔港 B06 泊位已让给 12 级台风紧急避险船浙象渔05777，请凭本提醒改派其他空闲泊位或前往避风等级适配的邻近渔港',
+    read: false,
+    createdAt: hoursAgo(2),
+  },
+];
+
 /**
  * 首次进入时写入演示数据，并为缺少泊位记录的渔港补齐泊位。
  * 写库前统一 toPlain 脱代理，避免 DataCloneError。
+ * 全程幂等：已存在的库 / 泊位 / 紧急占用均不重复写入。
  */
 export async function ensureSeedData(): Promise<void> {
   const portCount = await db.ports.count();
@@ -291,6 +394,28 @@ export async function ensureSeedData(): Promise<void> {
     const existing = await db.berths.where('portId').equals(port.id).count();
     if (existing === 0) {
       await db.berths.bulkPut(toPlain(buildBerthRecords(port)));
+    }
+  }
+  // 预置紧急占用：仅在无任何紧急记录时播种，泊位 B06 同步为紧急限时状态
+  if ((await db.emergencyStays.count()) === 0 && (await db.ports.get('p-1001'))) {
+    await db.emergencyStays.bulkPut(toPlain(SEED_EMERGENCY_STAYS));
+    await db.reassignNotices.bulkPut(toPlain(SEED_REASSIGN_NOTICES));
+    const berth = await db.berths.get('p-1001-B06');
+    const stay = SEED_EMERGENCY_STAYS[0];
+    if (berth) {
+      await db.berths.put(
+        toPlain({
+          ...berth,
+          status: '占用',
+          vesselId: stay.vesselId,
+          vesselName: stay.vesselName,
+          berthAt: stay.startAt,
+          leaveAt: null,
+          occupyKind: '紧急',
+          expireAt: stay.expireAt,
+          emergencyStayId: stay.id,
+        }),
+      );
     }
   }
 }
