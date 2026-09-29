@@ -125,7 +125,11 @@ function openPortDetail(): void {
                 :show-text="false"
               />
               <span class="rank-item__meta">
-                在港 {{ row.summary.inPortCount }} 艘 · 空闲 {{ row.summary.free }} 个泊位 · {{ row.port.level }}
+                在港 {{ row.summary.inPortCount }} 艘
+                <el-tag v-if="row.summary.emergencyCount" size="small" type="danger" effect="plain">
+                  紧急 {{ row.summary.emergencyCount }}
+                </el-tag>
+                · 空闲 {{ row.summary.free }} 个泊位 · {{ row.port.level }}
               </span>
             </div>
           </div>
@@ -147,12 +151,28 @@ function openPortDetail(): void {
           <el-descriptions-item label="维修泊位">{{ activeSummary.maintenance }}</el-descriptions-item>
         </el-descriptions>
 
-        <p class="dialog-sub">在港船舶</p>
+        <p class="dialog-sub">
+          在港船舶
+          <el-tag v-if="activeSummary.emergencyCount" size="small" type="danger" effect="plain" class="dialog-tag">
+            紧急避风 {{ activeSummary.emergencyCount }}
+          </el-tag>
+        </p>
         <el-table :data="activeSummary.occupiedBerths" size="small" border empty-text="当前无在港船舶" data-testid="summary-inport-table">
-          <el-table-column prop="berthNo" label="泊位号" width="90" />
-          <el-table-column prop="vesselName" label="船名" min-width="130" />
-          <el-table-column label="靠泊时间" min-width="160">
+          <el-table-column prop="berthNo" label="泊位号" width="80" />
+          <el-table-column prop="vesselName" label="船名" min-width="120" />
+          <el-table-column label="类型" width="90">
+            <template #default="scope">
+              <el-tag v-if="scope.row.occupancyKind === '紧急'" size="small" type="danger" effect="dark">紧急</el-tag>
+              <el-tag v-else size="small" type="warning" effect="plain">普通</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="靠泊时间" min-width="150">
             <template #default="scope">{{ formatDateTime(scope.row.berthAt) }}</template>
+          </el-table-column>
+          <el-table-column label="释放时限" min-width="150">
+            <template #default="scope">
+              {{ scope.row.occupancyKind === '紧急' ? formatDateTime(scope.row.expiresAt) : '—' }}
+            </template>
           </el-table-column>
         </el-table>
 
@@ -167,7 +187,13 @@ function openPortDetail(): void {
         <p class="dialog-sub">全部泊位</p>
         <el-table :data="activeBerths" size="small" border>
           <el-table-column prop="berthNo" label="泊位号" width="90" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="120">
+            <template #default="scope">
+              <el-tag v-if="scope.row.occupancyKind === '紧急'" size="small" type="danger" effect="dark">紧急避风</el-tag>
+              <el-tag v-else-if="scope.row.status === '占用'" size="small" type="warning">占用</el-tag>
+              <el-tag v-else size="small" :type="scope.row.status === '维修' ? 'info' : 'success'">{{ scope.row.status }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="vesselName" label="占用船舶" min-width="130" />
         </el-table>
       </template>
@@ -250,6 +276,10 @@ function openPortDetail(): void {
   font-size: 13px;
   font-weight: 600;
   color: #17324d;
+}
+.dialog-tag {
+  margin-left: 8px;
+  font-weight: 400;
 }
 .free-berths {
   display: flex;

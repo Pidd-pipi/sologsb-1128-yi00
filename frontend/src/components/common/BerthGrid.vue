@@ -16,15 +16,18 @@ const props = withDefaults(
 const emit = defineEmits<{ (e: 'select', berth: Berth): void }>();
 
 const CELL_W = 120;
-const CELL_H = 78;
+const CELL_H = 88;
 const GAP = 12;
 const PAD = 14;
 
+/** 紧急避风占用在「占用」基础上用红色边框区分 */
 const COLORS: Record<BerthStatus, string> = {
   空闲: '#67c23a',
   占用: '#e6a23c',
   维修: '#909399',
 };
+
+const EMERGENCY_COLOR = '#f56c6c';
 
 const FILLS: Record<BerthStatus, string> = {
   空闲: '#f0f9eb',
@@ -36,18 +39,33 @@ const rows = computed(() => Math.max(1, Math.ceil(props.berths.length / props.pe
 const width = computed(() => PAD * 2 + props.perRow * CELL_W + (props.perRow - 1) * GAP);
 const height = computed(() => PAD * 2 + rows.value * CELL_H + (rows.value - 1) * GAP);
 
-const legend = computed(() =>
-  (['空闲', '占用', '维修'] as BerthStatus[]).map((status) => ({
+const legend = computed(() => {
+  const base = (['空闲', '占用', '维修'] as BerthStatus[]).map((status) => ({
     status,
     color: COLORS[status],
     count: props.berths.filter((b) => b.status === status).length,
-  })),
-);
+  }));
+  const emergency = props.berths.filter((b) => b.status === '占用' && b.occupancyKind === '紧急').length;
+  if (emergency > 0) {
+    base.push({ status: '占用', color: EMERGENCY_COLOR, count: emergency });
+  }
+  return base;
+});
 
 function cellAt(index: number): { x: number; y: number } {
   const row = Math.floor(index / props.perRow);
   const col = index % props.perRow;
   return { x: PAD + col * (CELL_W + GAP), y: PAD + row * (CELL_H + GAP) };
+}
+
+function cellColor(berth: Berth): string {
+  if (berth.status === '占用' && berth.occupancyKind === '紧急') return EMERGENCY_COLOR;
+  return COLORS[berth.status];
+}
+
+function cellFill(berth: Berth): string {
+  if (berth.status === '占用' && berth.occupancyKind === '紧急') return '#fef0f0';
+  return FILLS[berth.status];
 }
 
 function onSelect(berth: Berth): void {
@@ -70,38 +88,50 @@ function onSelect(berth: Berth): void {
           :width="CELL_W"
           :height="CELL_H"
           rx="10"
-          :fill="FILLS[berth.status]"
-          :stroke="highlightBerthNo === berth.berthNo ? '#409eff' : COLORS[berth.status]"
-          :stroke-width="highlightBerthNo === berth.berthNo ? 3 : 1.5"
+          :fill="cellFill(berth)"
+          :stroke="highlightBerthNo === berth.berthNo ? '#409eff' : cellColor(berth)"
+          :stroke-width="highlightBerthNo === berth.berthNo ? 3 : berth.status === '占用' && berth.occupancyKind === '紧急' ? 2.5 : 1.5"
           class="berth-grid__cell"
           :class="{ 'berth-grid__cell--selectable': selectable }"
           :data-testid="`berth-cell-${berth.berthNo}`"
           :data-berth-no="berth.berthNo"
           :data-status="berth.status"
+          :data-kind="berth.occupancyKind ?? '普通'"
           @click="onSelect(berth)"
         >
-          <title>{{ `${berth.berthNo} · ${berth.status}${berth.vesselName ? ' · ' + berth.vesselName : ''}` }}</title>
+          <title>
+            {{ `${berth.berthNo} · ${berth.occupancyKind === '紧急' ? '紧急避风占用' : berth.status}${berth.vesselName ? ' · ' + berth.vesselName : ''}` }}
+          </title>
         </rect>
         <text
           :x="cellAt(index).x + 12"
-          :y="cellAt(index).y + 26"
+          :y="cellAt(index).y + 22"
           class="berth-grid__no"
           :data-status="berth.status"
         >
           {{ berth.berthNo }}
         </text>
-        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 46" class="berth-grid__meta">
-          {{ berth.status }} · 水深 {{ formatNumber(berth.designDepth) }}m
+        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 40" class="berth-grid__meta">
+          {{ berth.status === '占用' && berth.occupancyKind === '紧急' ? '紧急避风' : berth.status }} · 水深 {{ formatNumber(berth.designDepth) }}m
         </text>
-        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 64" class="berth-grid__vessel">
+        <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 58" class="berth-grid__vessel">
           {{ berth.status === '占用' ? berth.vesselName || '未知船舶' : '—' }}
+        </text>
+        <text v-if="berth.status === '占用' && berth.occupancyKind === '紧急'" :x="cellAt(index).x + 12" :y="cellAt(index).y + 76" class="berth-grid__emergency">
+          {{ berth.typhoonLevel ? `${berth.typhoonLevel} 级台风` : '紧急避风' }}
         </text>
       </g>
     </svg>
     <div class="berth-grid__legend" data-testid="berth-grid-legend">
-      <span v-for="item in legend" :key="item.status" class="berth-grid__legend-item">
-        <i class="berth-grid__dot" :style="{ background: item.color }"></i>
-        {{ item.status }} {{ item.count }}
+      <template v-for="(item, idx) in legend" :key="`${item.color}-${idx}`">
+        <span v-if="idx < 3" class="berth-grid__legend-item">
+          <i class="berth-grid__dot" :style="{ background: item.color }"></i>
+          {{ item.status }} {{ item.count }}
+        </span>
+      </template>
+      <span v-if="berths.some((b) => b.occupancyKind === '紧急')" class="berth-grid__legend-item">
+        <i class="berth-grid__dot" :style="{ background: EMERGENCY_COLOR }"></i>
+        紧急避风 {{ berths.filter((b) => b.occupancyKind === '紧急').length }}
       </span>
     </div>
   </div>
@@ -136,6 +166,11 @@ function onSelect(berth: Berth): void {
 .berth-grid__vessel {
   font-size: 11px;
   fill: #3d5670;
+}
+.berth-grid__emergency {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #c45656;
 }
 .berth-grid__legend {
   display: flex;

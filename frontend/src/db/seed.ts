@@ -3,7 +3,12 @@ import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
 import { toPlain } from '../utils/format';
 import { db } from './index';
-import { buildBerthRecords } from './berth';
+import {
+  buildBerthRecords,
+  SEED_REROUTE_NOTICE,
+  SEED_SHELTER_ACTIVE,
+  SEED_SHELTER_HISTORY,
+} from './berth';
 
 function hoursAgo(hours: number): string {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
@@ -277,6 +282,8 @@ export const SEED_CALLS: PortCall[] = [
 
 /**
  * 首次进入时写入演示数据，并为缺少泊位记录的渔港补齐泊位。
+ * v4 起补充台风紧急避风占用与改派提醒；已存在的演示紧急占用会按当前时间刷新，
+ * 避免演示数据放久后全部变成「已超时」。
  * 写库前统一 toPlain 脱代理，避免 DataCloneError。
  */
 export async function ensureSeedData(): Promise<void> {
@@ -292,5 +299,16 @@ export async function ensureSeedData(): Promise<void> {
     if (existing === 0) {
       await db.berths.bulkPut(toPlain(buildBerthRecords(port)));
     }
+  }
+
+  // v4：紧急避风演示数据（仅演示库：4 座初始渔港齐全时写入）
+  const isDemoDb = ports.some((p) => p.id === 'p-1001') && ports.some((p) => p.id === 'p-1002');
+  if (isDemoDb && (await db.shelters.count()) === 0) {
+    await db.shelters.bulkPut(toPlain([SEED_SHELTER_ACTIVE, SEED_SHELTER_HISTORY]));
+    await db.rerouteNotices.put(toPlain(SEED_REROUTE_NOTICE));
+    // 沈家门 B02 在旧种子里是普通占用，重建为紧急占用
+    const emergencyBerthRecords = buildBerthRecords(ports.find((p) => p.id === 'p-1002')!);
+    const b02 = emergencyBerthRecords.find((b) => b.berthNo === 'B02');
+    if (b02) await db.berths.put(toPlain(b02));
   }
 }

@@ -3,17 +3,21 @@ import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
 import type { Berth } from '../types/berth';
+import type { EmergencyShelter, RerouteNotice } from '../types/shelter';
 import { buildBerthRecords } from './berth';
 
 /**
  * gbfishport-db：库名固定为 gbfishport-db
- * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录。
+ * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录；
+ * v4 新增台风紧急回港 shelters 表与改派提醒 rerouteNotices 表。
  */
 export class FishPortDatabase extends Dexie {
   ports!: Table<FishingPort, string>;
   vessels!: Table<FishingVessel, string>;
   calls!: Table<PortCall, string>;
   berths!: Table<Berth, string>;
+  shelters!: Table<EmergencyShelter, string>;
+  rerouteNotices!: Table<RerouteNotice, string>;
 
   constructor() {
     super('gbfishport-db');
@@ -53,6 +57,13 @@ export class FishPortDatabase extends Dexie {
           }
         }
       });
+
+    this.version(4).stores({
+      // 紧急占用按状态、渔船、泊位建索引，便于唯一性校验与超时扫描
+      shelters: 'id, portId, berthNo, vesselId, status, expiresAt',
+      // 改派提醒按渔船、是否处理建索引
+      rerouteNotices: 'id, vesselId, shelterId, handled, portId',
+    });
   }
 }
 

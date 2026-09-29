@@ -75,6 +75,7 @@ function onClick(): void {
 
     <div class="port-card__stats">
       <span>在港船数 <b>{{ summary.inPortCount }}</b></span>
+      <span v-if="summary.emergencyCount" class="port-card__emergency">紧急避风 <b>{{ summary.emergencyCount }}</b></span>
       <span>空闲泊位 <b>{{ summary.free }}</b></span>
       <span>维修泊位 <b>{{ summary.maintenance }}</b></span>
     </div>
@@ -140,6 +141,12 @@ function onClick(): void {
 }
 .port-card__stats b {
   color: #17324d;
+}
+.port-card__emergency {
+  color: #c45656;
+}
+.port-card__emergency b {
+  color: #c45656;
 }
 .port-card__supply {
   display: flex;

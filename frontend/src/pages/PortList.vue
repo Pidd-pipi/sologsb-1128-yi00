@@ -54,16 +54,19 @@ const overall = computed(() => {
   const list = portStore.ports;
   const berthTotal = list.reduce((sum, p) => sum + summaryOf(p.id).total, 0);
   const occupied = list.reduce((sum, p) => sum + summaryOf(p.id).occupied, 0);
+  const emergency = list.reduce((sum, p) => sum + summaryOf(p.id).emergencyCount, 0);
   return {
     portCount: list.length,
     berthTotal,
     occupied,
+    emergency,
     rate: berthTotal === 0 ? 0 : occupied / berthTotal,
   };
 });
 
 onMounted(async () => {
   if (!portStore.ports.length) await portStore.loadAll();
+  await portStore.sweepExpiredShelters();
 });
 
 function openDialog(): void {
@@ -99,9 +102,17 @@ function openPort(portId: string): void {
     <header class="page__head">
       <div>
         <h1>渔港一览</h1>
-        <p class="page__sub">共 {{ overall.portCount }} 座渔港 · {{ overall.berthTotal }} 个泊位 · 在港船舶 {{ overall.occupied }} 艘 · 平均占用率 {{ percentText(overall.rate) }}</p>
+        <p class="page__sub">
+          共 {{ overall.portCount }} 座渔港 · {{ overall.berthTotal }} 个泊位 · 在港船舶 {{ overall.occupied }} 艘 · 平均占用率 {{ percentText(overall.rate) }}
+          <el-tag v-if="overall.emergency" size="small" type="danger" effect="dark" class="head-emergency">
+            台风紧急避风 {{ overall.emergency }} 艘
+          </el-tag>
+        </p>
       </div>
-      <el-button type="primary" data-testid="open-port-dialog" @click="openDialog">登记渔港</el-button>
+      <div class="head-actions">
+        <el-button type="danger" plain data-testid="goto-shelter" @click="router.push('/shelter')">台风紧急回港</el-button>
+        <el-button type="primary" data-testid="open-port-dialog" @click="openDialog">登记渔港</el-button>
+      </div>
     </header>
 
     <el-card shadow="never" class="filter-card" data-testid="port-filter">
@@ -230,6 +241,13 @@ function openPort(portId: string): void {
   margin: 6px 0 0;
   font-size: 13px;
   color: #6b7c8c;
+}
+.head-actions {
+  display: flex;
+  gap: 8px;
+}
+.head-emergency {
+  margin-left: 8px;
 }
 .filter-card {
   border-radius: 10px;

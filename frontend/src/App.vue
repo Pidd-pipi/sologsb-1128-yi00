@@ -1,20 +1,36 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Location, MapLocation, Tickets, Van } from '@element-plus/icons-vue';
+import { Location, MapLocation, Tickets, Van, Warning } from '@element-plus/icons-vue';
 import { useUiStore } from './stores/uiStore';
+import { usePortStore } from './stores/portStore';
 
 const route = useRoute();
 const uiStore = useUiStore();
+const portStore = usePortStore();
 
 const activePath = computed(() => {
   const path = route.path;
   if (path === '/' || path.startsWith('/ports')) return '/';
   if (path.startsWith('/vessels')) return '/vessels';
   if (path.startsWith('/calls')) return '/calls';
+  if (path.startsWith('/shelter')) return '/shelter';
   if (path.startsWith('/map')) return '/map';
   return path;
+});
+
+// 台风紧急占用是限时的：应用启动后每 30s 扫描一次，超时自动释放泊位并保留记录
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(async () => {
+  if (!portStore.ports.length) await portStore.loadAll();
+  void portStore.sweepExpiredShelters();
+  sweepTimer = setInterval(() => {
+    void portStore.sweepExpiredShelters();
+  }, 30_000);
+});
+onBeforeUnmount(() => {
+  if (sweepTimer !== null) clearInterval(sweepTimer);
 });
 
 watch(
@@ -49,6 +65,10 @@ watch(
         <el-menu-item index="/calls">
           <el-icon><Tickets /></el-icon>
           进出港登记
+        </el-menu-item>
+        <el-menu-item index="/shelter">
+          <el-icon><Warning /></el-icon>
+          台风紧急回港
         </el-menu-item>
         <el-menu-item index="/map">
           <el-icon><MapLocation /></el-icon>

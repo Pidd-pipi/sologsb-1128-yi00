@@ -13,6 +13,7 @@ export interface UseBerthStatus {
 function summarize(portId: string, list: Berth[]): BerthSummary {
   const total = list.length;
   const occupied = list.filter((b) => b.status === '占用').length;
+  const emergency = list.filter((b) => b.status === '占用' && b.occupancyKind === '紧急').length;
   const maintenance = list.filter((b) => b.status === '维修').length;
   const free = total - occupied - maintenance;
   return {
@@ -23,13 +24,15 @@ function summarize(portId: string, list: Berth[]): BerthSummary {
     maintenance,
     occupancyRate: total === 0 ? 0 : occupied / total,
     inPortCount: occupied,
+    emergencyCount: emergency,
     freeBerths: list.filter((b) => b.status === '空闲'),
     occupiedBerths: list.filter((b) => b.status === '占用'),
+    emergencyBerths: list.filter((b) => b.status === '占用' && b.occupancyKind === '紧急'),
   };
 }
 
 /**
- * 聚合泊位占用与在港船舶数量，输出占用率与空闲泊位列表。
+ * 聚合泊位占用与在港船舶数量，输出占用率、空闲泊位列表与台风紧急占用数。
  * @param berths 泊位响应式数据源（一般来自 portStore）
  * @param portId 需要聚焦的渔港 id；不传则对全部泊位聚合
  */

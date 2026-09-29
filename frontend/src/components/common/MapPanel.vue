@@ -45,6 +45,7 @@ interface MapNode {
   y: number;
   rate: number;
   occupied: number;
+  emergency: number;
   total: number;
   focused: boolean;
 }
@@ -59,6 +60,7 @@ const nodes = computed<MapNode[]>(() =>
       y: pos.y,
       rate: summary.occupancyRate,
       occupied: summary.occupied,
+      emergency: summary.emergencyCount,
       total: summary.total,
       focused: port.id === props.focusedPortId,
     };
@@ -165,15 +167,15 @@ watch(
           :cx="node.x"
           :cy="node.y"
           :r="node.focused ? 20 : 15"
-          :fill="nodeColor(node.rate)"
+          :fill="node.emergency > 0 ? '#f56c6c' : nodeColor(node.rate)"
           fill-opacity="0.22"
-          :stroke="nodeColor(node.rate)"
+          :stroke="node.emergency > 0 ? '#f56c6c' : nodeColor(node.rate)"
           :stroke-width="node.focused ? 3 : 2"
         />
-        <circle :cx="node.x" :cy="node.y" r="4.5" :fill="nodeColor(node.rate)" />
+        <circle :cx="node.x" :cy="node.y" r="4.5" :fill="node.emergency > 0 ? '#f56c6c' : nodeColor(node.rate)" />
         <text :x="node.x" :y="node.y - 24" text-anchor="middle" class="map-panel__label">{{ node.port.name }}</text>
         <text :x="node.x" :y="node.y + 34" text-anchor="middle" class="map-panel__meta">
-          {{ node.occupied }}/{{ node.total }} 占用 {{ percentText(node.rate) }}
+          {{ node.occupied }}/{{ node.total }} 占用{{ node.emergency > 0 ? ` · 紧急 ${node.emergency}` : '' }} {{ percentText(node.rate) }}
         </text>
       </g>
       <text x="14" y="24" class="map-panel__caption">经纬网格（每格约 {{ ((bounds.maxLng - bounds.minLng) / 8).toFixed(2) }}° 经差）</text>
